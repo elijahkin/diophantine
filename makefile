@@ -1,5 +1,5 @@
 CC = clang++
-CFLAGS = -std=c++20 -O3 -Wall -Wextra -Wpedantic -fopenmp
+CFLAGS = -std=c++17 -O3 -Wall -Wextra -Wpedantic -fopenmp
 
 all: solve_omp
 

@@ -1,9 +1,12 @@
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <optional>
+#include <tuple>
 #include <vector>
 
 template <typename T>
@@ -29,8 +32,19 @@ template <typename T>
 bool modularly_impossible(T n) {
   T r;
 
+  r = n % 16;
+  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8 || r == 12 || r == 13 ||
+      r == 14 || r == 15) {
+    return true;
+  }
+
   r = n % 9;
   if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8) {
+    return true;
+  }
+
+  r = n % 13;
+  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8 || r == 9) {
     return true;
   }
 
@@ -39,8 +53,8 @@ bool modularly_impossible(T n) {
     return true;
   }
 
-  r = n % 13;
-  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8 || r == 9) {
+  r = n % 31;
+  if (r == 15 || r == 23 || r == 27 || r == 29 || r == 30) {
     return true;
   }
 
@@ -141,31 +155,14 @@ class DiophantineSolver {
             }
 
             // Try to express v_div as a sum of three sixth powers
-            // TODO Can this be made its own function return an optional triple?
-            // Keep precomputed sorted array of all x^6 + y^6 to speed up the
-            // decomposition?
-            T c1_max = integer_sixth_root(v_div);
-            for (T c1 = 1; c1 <= c1_max; ++c1) {
-              T c16 = pow6(c1);
-              T rem1 = v_div - c16;
-
-              // Constrain c2 <= c1 to avoid duplicate permutations
-              T c2_max = std::min(integer_sixth_root(rem1), c1);
-              for (T c2 = 1; c2 <= c2_max; ++c2) {
-                T c26 = pow6(c2);
-                T rem2 = rem1 - c26;
-
-                T c3 = integer_sixth_root(rem2);
-
-                // Check if remaining value is exactly a 6th root and c3 <= c2
-                if (c3 > 0 && c3 <= c2 && pow6(c3) == rem2) {
-                  // If we can, we've found a solution!
-                  T b3 = 7 * c1;
-                  T b4 = 7 * c2;
-                  T b5 = 7 * c3;
-                  report_solution(a1, a2, b1, b2, b3, b4, b5);
-                }
-              }
+            auto cs = try_decompose(v_div);
+            if (cs.has_value()) {
+              // If we can, we've found a solution!
+              auto [c1, c2, c3] = cs.value();
+              T b3 = 7 * c1;
+              T b4 = 7 * c2;
+              T b5 = 7 * c3;
+              report_solution(a1, a2, b1, b2, b3, b4, b5);
             }
           }
         }
@@ -177,7 +174,7 @@ class DiophantineSolver {
   T mod_;
 
   // This can't be unordered_map because T may not be hashable, e.g. __uint128_t
-  // TODO Better to be a vector?
+  // TODO Better to use a vector of arrays?
   std::vector<std::vector<T>> sols_;
 
   // Precompute solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
@@ -190,6 +187,32 @@ class DiophantineSolver {
         sols_[t].push_back(x);
       }
     }
+  }
+
+  // Try to express n as a sum of three sixth powers
+  // TODO Faster to keep precomputed sorted array of all x^6 + y^6?
+  std::optional<std::tuple<T, T, T>> try_decompose(T n) {
+    T c1_max = integer_sixth_root(n);
+    for (T c1 = 1; c1 <= c1_max; ++c1) {
+      T c16 = pow6(c1);
+      T rem1 = n - c16;
+
+      // Constrain c2 <= c1 to avoid duplicate permutations
+      T c2_max = std::min(integer_sixth_root(rem1), c1);
+      for (T c2 = 1; c2 <= c2_max; ++c2) {
+        T c26 = pow6(c2);
+        T rem2 = rem1 - c26;
+
+        T c3 = integer_sixth_root(rem2);
+
+        // Check if remaining value is exactly a 6th root and c3 <= c2
+        if (c3 > 0 && c3 <= c2 && pow6(c3) == rem2) {
+          return std::tuple{c1, c2, c3};
+        }
+      }
+    }
+
+    return std::nullopt;
   }
 
   void report_solution(T a1, T a2, T b1, T b2, T b3, T b4, T b5) {
@@ -207,6 +230,12 @@ int main() {
   auto solver = DiophantineSolver<__uint128_t>(117649);  // 7^6
   assert(solver.get_precomputed_size() == 16807);        // 7^5
 
-  solver.solve(1500);
+  auto start = std::chrono::high_resolution_clock::now();
+  solver.solve(400);
+  auto stop = std::chrono::high_resolution_clock::now();
+
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+  std::cout << "Finished search in " << duration.count() << " ms!\n";
   return 0;
 }
