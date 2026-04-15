@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -25,48 +27,6 @@ T powmod(T base, T exp, T mod) {
   return result;
 }
 
-// Returns true if we're sure that n is impossible express as a sum of three
-// sixth powers, and false otherwise
-// TODO Could this function be automatically generated from a list of moduli?
-template <typename T>
-bool modularly_impossible(T n) {
-  T r;
-
-  r = n % 16;
-  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8 || r == 12 || r == 13 ||
-      r == 14 || r == 15) {
-    return true;
-  }
-
-  r = n % 9;
-  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8) {
-    return true;
-  }
-
-  r = n % 13;
-  if (r == 4 || r == 5 || r == 6 || r == 7 || r == 8 || r == 9) {
-    return true;
-  }
-
-  r = n % 7;
-  if (r == 4 || r == 5 || r == 6) {
-    return true;
-  }
-
-  r = n % 31;
-  if (r == 15 || r == 23 || r == 27 || r == 29 || r == 30) {
-    return true;
-  }
-
-  r = n % 19;
-  if (r == 5 || r == 16 || r == 17) {
-    return true;
-  }
-
-  // Test is inconclusive
-  return false;
-}
-
 template <typename T>
 T pow6(T x) {
   T x2 = x * x;
@@ -80,22 +40,62 @@ T integer_sixth_root(T n) {
     return 0;
   }
 
-  // Uses a float estimate then corrects by +/- 1 to handle rounding error
-  T r = static_cast<T>(std::pow(static_cast<double>(n), 1.0 / 6.0));
+  // Quickly find upper bound
+  T high = 2;
+  while (pow6(high) <= n) {
+    high <<= 1;
+  }
 
-  while (pow6(r + 1) <= n) {
-    ++r;  // Step up if float rounded down
+  // Binary search for the floor
+  T low = 1;
+  T ans = 1;
+  while (low <= high) {
+    T mid = low + (high - low) / 2;
+    if (pow6(mid) <= n) {
+      ans = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
   }
-  while (r > 0 && pow6(r) > n) {
-    --r;  // Step down if float rounded up
-  }
-  return r;
+  return ans;
 }
 
-template <typename T>
+template <typename T, T Mod>
+class ModularFilter {
+ public:
+  ModularFilter() {
+    std::array<bool, Mod> is_sixth_power{};
+    for (T a = 0; a < Mod; ++a) {
+      is_sixth_power[powmod(a, T{6}, Mod)] = true;
+    }
+
+    std::vector<T> res;
+    for (T a = 0; a < Mod; ++a) {
+      if (is_sixth_power[a]) {
+        res.push_back(a);
+      }
+    }
+
+    for (T a : res) {
+      for (T b : res) {
+        for (T c : res) {
+          reachable_[(a + b + c) % Mod] = true;
+        }
+      }
+    }
+  }
+
+  [[nodiscard]] bool is_impossible(T n) const { return !reachable_[n % Mod]; }
+
+ private:
+  std::array<bool, Mod> reachable_{};
+};
+
+template <typename T, T Mod>
 class DiophantineSolver {
  public:
-  explicit DiophantineSolver(T mod) : mod_(mod) { precompute(); }
+  DiophantineSolver() { precompute(); }
 
   [[nodiscard]] size_t get_precomputed_size() const {
     size_t count = 0;
@@ -111,7 +111,12 @@ class DiophantineSolver {
     assert(a_max < std::pow(0.5 * lim, 1.0 / 6) &&
            "a_max is too large and will cause overflow");
 
-#pragma omp parallel for schedule(dynamic, 1)
+    // Maximum value of v_div that can occur:
+    // v <= a1^6 + a2^6 <= 2 * a_max^6
+    T max_v_div = (pow6(a_max) * 2) / Mod;
+    precompute_pair_sums(max_v_div);
+
+#pragma omp parallel for schedule(guided)
     for (T a1 = 1; a1 <= a_max; ++a1) {
       T a16 = pow6(a1);
       for (T a2 = 1; a2 <= a1; ++a2) {
@@ -128,12 +133,12 @@ class DiophantineSolver {
           T b16 = pow6(b1);
           T t = a16 + a26 - b16;
 
-          if (t % mod_ == 0) {
+          if (t % Mod == 0) {
             continue;
           }
 
           // Number theory tells there are exactly 6 solutions for each key
-          const auto& b2_candidates = sols_[t % mod_];
+          const auto& b2_candidates = sols_[t % Mod];
           for (auto b2 : b2_candidates) {
             if (b2 > b_max) {
               break;
@@ -142,15 +147,21 @@ class DiophantineSolver {
             T b26 = pow6(b2);
 
             // Enforce that v is positive
-            if (t <= b26) {
-              continue;
+            if (b26 >= t) {
+              break;  // b2_candidates is sorted; all further b2 values are
+                      // larger
             }
 
             T v = t - b26;
-            T v_div = v / mod_;
+            T v_div = v / Mod;
 
             // Eliminate as much as possible using modular restrictions
-            if (modularly_impossible(v_div)) {
+            if (filter16_.is_impossible(v_div) ||
+                filter9_.is_impossible(v_div) ||
+                filter13_.is_impossible(v_div) ||
+                filter7_.is_impossible(v_div) ||
+                filter31_.is_impossible(v_div) ||
+                filter19_.is_impossible(v_div)) {
               continue;
             }
 
@@ -162,6 +173,9 @@ class DiophantineSolver {
               T b3 = 7 * c1;
               T b4 = 7 * c2;
               T b5 = 7 * c3;
+
+              // Mark this as a critical section to avoid garbled output
+#pragma omp critical
               report_solution(a1, a2, b1, b2, b3, b4, b5);
             }
           }
@@ -171,17 +185,15 @@ class DiophantineSolver {
   }
 
  private:
-  T mod_;
-
   // This can't be unordered_map because T may not be hashable, e.g. __uint128_t
-  // TODO Better to use a vector of arrays?
-  std::vector<std::vector<T>> sols_;
+  // TODO Better to use array of arrays? The inner vector should contain exactly
+  // 6 elements provided that the index into the outer vector is 1 mod 7.
+  std::array<std::vector<T>, Mod> sols_;
 
   // Precompute solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
   void precompute() {
-    sols_.resize(mod_);
-    for (T x = 0; x < mod_; ++x) {
-      const T t = powmod<T>(x, 6, mod_);
+    for (T x = 0; x < Mod; ++x) {
+      const T t = powmod<T>(x, 6, Mod);
       if (t != 0) {
         // Ascending by construction
         sols_[t].push_back(x);
@@ -189,29 +201,65 @@ class DiophantineSolver {
     }
   }
 
-  // Try to express n as a sum of three sixth powers
-  // TODO Faster to keep precomputed sorted array of all x^6 + y^6?
-  std::optional<std::tuple<T, T, T>> try_decompose(T n) {
-    T c1_max = integer_sixth_root(n);
-    for (T c1 = 1; c1 <= c1_max; ++c1) {
+  // TODO Can we somehow combine these for efficiency?
+  ModularFilter<T, 16> filter16_;
+  ModularFilter<T, 9> filter9_;
+  ModularFilter<T, 13> filter13_;
+  ModularFilter<T, 7> filter7_;
+  ModularFilter<T, 31> filter31_;
+  ModularFilter<T, 19> filter19_;
+
+  // TODO Is it better to move decomposition logic (pair sum computations and
+  // try_decomposte) into its own class like ModularFilter?
+  struct PairSum {
+    T sum;
+    T c1;
+    T c2;
+  };
+
+  std::vector<PairSum> pair_sums_;
+
+  void precompute_pair_sums(T max_n) {
+    pair_sums_.clear();
+
+    T c_max = integer_sixth_root(max_n);
+    for (T c1 = 1; c1 <= c_max; ++c1) {
       T c16 = pow6(c1);
-      T rem1 = n - c16;
-
-      // Constrain c2 <= c1 to avoid duplicate permutations
-      T c2_max = std::min(integer_sixth_root(rem1), c1);
-      for (T c2 = 1; c2 <= c2_max; ++c2) {
-        T c26 = pow6(c2);
-        T rem2 = rem1 - c26;
-
-        T c3 = integer_sixth_root(rem2);
-
-        // Check if remaining value is exactly a 6th root and c3 <= c2
-        if (c3 > 0 && c3 <= c2 && pow6(c3) == rem2) {
-          return std::tuple{c1, c2, c3};
+      for (T c2 = 1; c2 <= c1; ++c2) {
+        T sum = c16 + pow6(c2);
+        if (sum <= max_n) {
+          pair_sums_.push_back({sum, c1, c2});
         }
       }
     }
 
+    // Sort by the sum for binary search
+    std::sort(pair_sums_.begin(), pair_sums_.end(),
+              [](const PairSum& a, const PairSum& b) { return a.sum < b.sum; });
+  }
+
+  // Try to express n as a sum of three sixth powers
+  std::optional<std::tuple<T, T, T>> try_decompose(T n) {
+    T c3_max = integer_sixth_root(n);
+    for (T c3 = 1; c3 <= c3_max; ++c3) {
+      T c36 = pow6(c3);
+      T target = n - c36;
+
+      // Binary search for all pair sums equal to target
+      auto lower = std::lower_bound(
+          pair_sums_.begin(), pair_sums_.end(), target,
+          [](const PairSum& ps, const T& value) { return ps.sum < value; });
+
+      for (auto it = lower; it != pair_sums_.end() && it->sum == target; ++it) {
+        T c1 = it->c1;
+        T c2 = it->c2;
+
+        // Enforce ordering to avoid duplicate permutations
+        if (c3 <= c2) {
+          return std::tuple{c1, c2, c3};
+        }
+      }
+    }
     return std::nullopt;
   }
 
@@ -227,11 +275,11 @@ class DiophantineSolver {
 };
 
 int main() {
-  auto solver = DiophantineSolver<__uint128_t>(117649);  // 7^6
-  assert(solver.get_precomputed_size() == 16807);        // 7^5
+  auto solver = DiophantineSolver<__uint128_t, 117649>();  // 7^6
+  assert(solver.get_precomputed_size() == 16807);          // 7^5
 
   auto start = std::chrono::high_resolution_clock::now();
-  solver.solve(400);
+  solver.solve(1200);
   auto stop = std::chrono::high_resolution_clock::now();
 
   auto duration =
