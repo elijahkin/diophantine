@@ -1,20 +1,23 @@
-#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <tuple>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 // ============================= Helper Functions ==============================
 
 template <typename T>
-T powmod(T base, T exp, T mod) {
+constexpr T powmod(T base, T exp, T mod) {
   T result = 1;
   T b = base % mod;
 
@@ -67,10 +70,9 @@ T integer_sixth_root(T n) {
 
 // ============================= Modular Filtering =============================
 
-// TODO Can this be made constexpr?
 // TODO Can we generalize to sums of n kth powers? Here, n=3 and k=6
 template <size_t Mod>
-uint64_t compute_reachable_mask_impl() {
+constexpr uint64_t compute_reachable_mask_impl() {
   static_assert(Mod <= 63, "Mod must be <= 63");
 
   // TODO Can we eliminate containers entirely and only use bitmasks?
@@ -79,17 +81,19 @@ uint64_t compute_reachable_mask_impl() {
     is_sixth_power[powmod(a, 6UL, Mod)] = true;
   }
 
-  std::vector<size_t> res;
-  for (size_t a = 0; a < Mod; ++a) {
-    if (is_sixth_power[a]) {
-      res.push_back(a);
-    }
-  }
-
   uint64_t mask = 0;
-  for (size_t a : res) {
-    for (size_t b : res) {
-      for (size_t c : res) {
+  for (size_t a = 0; a < Mod; ++a) {
+    if (!is_sixth_power[a]) {
+      continue;
+    }
+    for (size_t b = 0; b < Mod; ++b) {
+      if (!is_sixth_power[b]) {
+        continue;
+      }
+      for (size_t c = 0; c < Mod; ++c) {
+        if (!is_sixth_power[c]) {
+          continue;
+        }
         mask |= 1UL << ((a + b + c) % Mod);
       }
     }
@@ -101,11 +105,11 @@ template <typename T, size_t Mod>
 class ModularFilter {
  public:
   [[nodiscard]] bool is_impossible(T n) const {
-    return !((reachable_ >> (n % Mod)) & 1);
+    return !((kReachable >> (n % Mod)) & 1);
   }
 
  private:
-  uint64_t reachable_ = compute_reachable_mask_impl<Mod>();
+  static constexpr uint64_t kReachable = compute_reachable_mask_impl<Mod>();
 };
 
 // ============================= Power Decomposer ==============================
@@ -113,44 +117,33 @@ class ModularFilter {
 template <typename T>
 class PowerDecomposer {
  public:
-  void precompute_pair_sums(T max_n) {
-    pair_sums_.clear();
-
+  explicit PowerDecomposer(T max_n) {
     size_t c_max = integer_sixth_root(max_n);
     for (size_t c1 = 1; c1 <= c_max; ++c1) {
       T c16 = pow6<T>(c1);
       for (size_t c2 = 1; c2 <= c1; ++c2) {
         T sum = c16 + pow6<T>(c2);
         if (sum <= max_n) {
-          pair_sums_.push_back({sum, c1, c2});
+          pair_sum_map_[sum].push_back({c1, c2});
         }
       }
     }
-
-    // Sort by the sum for binary search
-    std::sort(pair_sums_.begin(), pair_sums_.end(),
-              [](const PairSum& a, const PairSum& b) { return a.sum < b.sum; });
   }
 
   // Try to express n as a sum of three sixth powers
-  std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T n) {
+  std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T n) const {
     size_t c3_max = integer_sixth_root(n);
     for (size_t c3 = 1; c3 <= c3_max; ++c3) {
       T c36 = pow6<T>(c3);
       T target = n - c36;
 
-      // Binary search for all pair sums equal to target
-      auto lower = std::lower_bound(
-          pair_sums_.begin(), pair_sums_.end(), target,
-          [](const PairSum& ps, const T& value) { return ps.sum < value; });
-
-      for (auto it = lower; it != pair_sums_.end() && it->sum == target; ++it) {
-        size_t c1 = it->c1;
-        size_t c2 = it->c2;
-
-        // Enforce ordering to avoid duplicate permutations
-        if (c3 <= c2) {
-          return std::tuple{c1, c2, c3};
+      auto it = pair_sum_map_.find(target);
+      if (it != pair_sum_map_.end()) {
+        for (auto [c1, c2] : it->second) {
+          // Enforce ordering to avoid duplicate permutations
+          if (c3 <= c2) {
+            return std::tuple{c1, c2, c3};
+          }
         }
       }
     }
@@ -158,13 +151,7 @@ class PowerDecomposer {
   }
 
  private:
-  struct PairSum {
-    T sum;
-    size_t c1;
-    size_t c2;
-  };
-
-  std::vector<PairSum> pair_sums_;
+  std::unordered_map<T, std::vector<std::pair<size_t, size_t>>> pair_sum_map_;
 };
 
 // ============================ Diophantine Solver =============================
@@ -191,16 +178,14 @@ class DiophantineSolver {
     // Maximum value of v_div that can occur:
     // v <= a1^6 + a2^6 <= 2 * a_max^6
     T max_v_div = (pow6<T>(a_max) * 2) / Mod;
-
-    // TODO Should we merge the constructor with precompute_pair_sums?
-    PowerDecomposer<T> decomposer;
-    decomposer.precompute_pair_sums(max_v_div);
+    PowerDecomposer<T> decomposer(max_v_div);
 
 #pragma omp parallel for schedule(guided)
     for (size_t a1 = 1; a1 <= a_max; ++a1) {
       T a16 = pow6<T>(a1);
       for (size_t a2 = 1; a2 <= a1; ++a2) {
-        // Prune for only non-primitive solutions
+        // a1 and a2 both being divisible by either 2 or 3 imply the solution is
+        // non-primitive
         if ((a1 % 2 == 0 && a2 % 2 == 0) || (a1 % 3 == 0 && a2 % 3 == 0)) {
           continue;
         }
@@ -219,6 +204,7 @@ class DiophantineSolver {
 
           // Number theory tells there are exactly 6 solutions for each key
           const auto& b2_candidates = sols_[t % Mod];
+          // TODO If a_max is too large, do we miss candidates?
           for (auto b2 : b2_candidates) {
             if (b2 > b_max) {
               break;
@@ -254,11 +240,13 @@ class DiophantineSolver {
               size_t b4 = 7 * c2;
               size_t b5 = 7 * c3;
 
-              // Mark this as a critical section to avoid garbled output
+              std::ostringstream oss;
+              oss << a1 << "^6 + " << a2 << "^6 = " << b1 << "^6 + " << b2
+                  << "^6 + " << b3 << "^6 + " << b4 << "^6 + " << b5 << "^6\n";
+
+              // Lock while writing to avoid garbled output
 #pragma omp critical
-              std::cout << a1 << "^6 + " << a2 << "^6 = " << b1 << "^6 + " << b2
-                        << "^6 + " << b3 << "^6 + " << b4 << "^6 + " << b5
-                        << "^6\n";
+              std::cout << oss.str();
             }
           }
         }
@@ -305,12 +293,23 @@ class DiophantineSolver {
   ModularFilter<T, 19> filter19_;
 };
 
+namespace std {
+template <>
+struct hash<__uint128_t> {
+  size_t operator()(__uint128_t x) const {
+    auto hi = static_cast<uint64_t>(x >> 64);
+    auto lo = static_cast<uint64_t>(x);
+    return std::hash<uint64_t>{}(hi ^ lo);
+  }
+};
+}  // namespace std
+
 int main() {
   auto solver = DiophantineSolver<__uint128_t, 117649>();  // 7^6
   assert(solver.get_precomputed_size() == 16807);          // 7^5
 
   auto start = std::chrono::high_resolution_clock::now();
-  solver.solve(1200);
+  solver.solve(3000);
   auto stop = std::chrono::high_resolution_clock::now();
 
   auto duration =
