@@ -170,8 +170,9 @@ class PowerDecomposer {
 
   // Try to express y as a sum of three sixth powers x1^6 + x2^6 + x3^6
   std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T y) const {
-    // If y is 0 mod 8, it needs to be divisible by 2^6, likewise for 9 and 3^6
-    if ((y % 8 == 0 && y % 64 != 0) || (y % 9 == 0 && y % 729 != 0)) {
+    // Deep pruning for 7, 8, and 9
+    if ((y % 7 == 0 && y % 117649 != 0) || (y % 8 == 0 && y % 64 != 0) ||
+        (y % 9 == 0 && y % 729 != 0)) {
       return std::nullopt;
     }
 
@@ -194,6 +195,7 @@ class PowerDecomposer {
   }
 
  private:
+  // TODO AI is insisting that this would be better as a vector with equal_range
   std::unordered_map<T, std::vector<std::pair<size_t, size_t>>> pair_sum_map_;
 };
 
@@ -233,19 +235,18 @@ class DiophantineSolver {
           T b16 = pow6<T>(b1);
           T t = a16 + a26 - b16;
 
-          if (t % Mod == 0) {
-            continue;
-          }
-
-          // Number theory tells there are exactly 6 solutions for each key
+          // Number theory tells there are either 0 or 6 solutions for each key
           const auto& b2_candidates = power_residues_[t % Mod];
-          // TODO If a_max is too large, do we miss candidates?
+          // TODO We are missing some candidates, e.g. when a1 = 1117, a2 =
+          // 770, and b1 = 1092, we never get b2 = 861.
           for (auto b2 : b2_candidates) {
-            T b26 = pow6<T>(b2);
+            if (b2 > b1) {
+              break;  // Enforce b1 >= b2; candidates are ascending
+            }
 
-            // Enforce that v is positive
+            T b26 = pow6<T>(b2);
             if (b26 >= t) {
-              break;  // b2_candidates is sorted; all further b2 values larger
+              break;  // Enforce v > 0; candidates are ascending
             }
 
             T v = t - b26;
