@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -43,23 +44,23 @@ T pow6(T x) {
 // TODO If we precompute sixth powers, we can delete this function and just use
 // an std::upper_bound instead
 template <typename T>
-T integer_sixth_root(T n) {
+size_t integer_sixth_root(T n) {
   if (n == 0) {
     return 0;
   }
 
   // Quickly find upper bound
-  T high = 2;
-  while (pow6(high) <= n) {
+  size_t high = 2;
+  while (pow6<T>(high) <= n) {
     high <<= 1;
   }
 
   // Binary search for the floor
-  T low = 1;
-  T ans = 1;
+  size_t low = 1;
+  size_t ans = 1;
   while (low <= high) {
-    T mid = low + (high - low) / 2;
-    if (pow6(mid) <= n) {
+    size_t mid = low + ((high - low) / 2);
+    if (pow6<T>(mid) <= n) {
       ans = mid;
       low = mid + 1;
     } else {
@@ -70,18 +71,6 @@ T integer_sixth_root(T n) {
 }
 
 // ============================ Power Residue Table ============================
-
-struct SolutionSet {
- public:
-  void push_back(size_t v) { values_[count_++] = v; }
-
-  [[nodiscard]] const size_t* begin() const { return values_.data(); }
-  [[nodiscard]] const size_t* end() const { return values_.data() + count_; }
-
- private:
-  std::array<size_t, 6> values_{};
-  uint8_t count_ = 0;
-};
 
 template <size_t Mod>
 class PowerResidueTable {
@@ -96,10 +85,21 @@ class PowerResidueTable {
     }
   }
 
-  // TODO Could this return some kind of iterator to keep SolutionSet private?
-  const SolutionSet& operator[](size_t t) const { return residues_[t]; }
+  std::span<const size_t> operator[](size_t t) const { return residues_[t]; }
 
  private:
+  struct SolutionSet {
+   public:
+    void push_back(size_t v) { values_[count_++] = v; }
+
+    [[nodiscard]] const size_t* begin() const { return values_.data(); }
+    [[nodiscard]] const size_t* end() const { return values_.data() + count_; }
+
+   private:
+    std::array<size_t, 6> values_{};
+    uint8_t count_ = 0;
+  };
+
   // TODO This only stores data for indices which are 1 mod 7. Are we using too
   // much memory?
   std::array<SolutionSet, Mod> residues_;
@@ -155,31 +155,37 @@ template <typename T>
 class PowerDecomposer {
  public:
   explicit PowerDecomposer(T max_n) {
+    // Precompute all x^6 + y^6 under a limit
     size_t c_max = integer_sixth_root(max_n);
-    for (size_t c1 = 1; c1 <= c_max; ++c1) {
-      T c16 = pow6<T>(c1);
-      for (size_t c2 = 1; c2 <= c1; ++c2) {
-        T sum = c16 + pow6<T>(c2);
+    for (size_t x = 1; x <= c_max; ++x) {
+      T x6 = pow6<T>(x);
+      for (size_t y = 1; y <= x; ++y) {
+        T sum = x6 + pow6<T>(y);
         if (sum <= max_n) {
-          pair_sum_map_[sum].push_back({c1, c2});
+          pair_sum_map_[sum].push_back({x, y});
         }
       }
     }
   }
 
-  // Try to express n as a sum of three sixth powers
-  std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T n) const {
-    size_t c3_max = integer_sixth_root(n);
-    for (size_t c3 = 1; c3 <= c3_max; ++c3) {
-      T c36 = pow6<T>(c3);
-      T target = n - c36;
+  // Try to express y as a sum of three sixth powers x1^6 + x2^6 + x3^6
+  std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T y) const {
+    // If y is 0 mod 8, it needs to be divisible by 2^6, likewise for 9 and 3^6
+    if ((y % 8 == 0 && y % 64 != 0) || (y % 9 == 0 && y % 729 != 0)) {
+      return std::nullopt;
+    }
+
+    size_t x3_max = integer_sixth_root(y);
+    for (size_t x3 = 1; x3 <= x3_max; ++x3) {
+      T x36 = pow6<T>(x3);
+      T target = y - x36;
 
       auto it = pair_sum_map_.find(target);
       if (it != pair_sum_map_.end()) {
-        for (auto [c1, c2] : it->second) {
+        for (auto [x1, x2] : it->second) {
           // Enforce ordering to avoid duplicate permutations
-          if (c3 <= c2) {
-            return std::tuple{c1, c2, c3};
+          if (x3 <= x2) {
+            return std::tuple{x1, x2, x3};
           }
         }
       }
