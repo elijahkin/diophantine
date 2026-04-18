@@ -107,9 +107,9 @@ class PowerResidueTable {
 
 // ============================= Modular Filtering =============================
 
-// TODO Can we generalize to sums of n kth powers? Here, n=3 and k=6
+// TODO Generalize to sums of n kth powers. Currently, n=3 and k=6
 template <size_t Mod>
-constexpr uint64_t compute_reachable_mask_impl() {
+constexpr uint64_t compute_reachable_mask() {
   static_assert(Mod <= 63, "Mod must be <= 63");
 
   // TODO Can we eliminate containers entirely and only use bitmasks?
@@ -138,15 +138,22 @@ constexpr uint64_t compute_reachable_mask_impl() {
   return mask;
 }
 
+// TODO Does T really belong as a template of this?
 template <typename T, size_t Mod>
-class ModularFilter {
- public:
-  [[nodiscard]] bool is_impossible(T n) const {
-    return !((kReachable >> (n % Mod)) & 1);
-  }
+struct ModularFilter {
+  static bool is_impossible(T n) { return !((kReachable >> (n % Mod)) & 1); }
 
- private:
-  static constexpr uint64_t kReachable = compute_reachable_mask_impl<Mod>();
+  static constexpr uint64_t kReachable = compute_reachable_mask<Mod>();
+};
+
+// TODO Can this be merged with the struct above somehow?
+template <typename T, size_t... Moduli>
+struct ModularFilterPack {
+  // Uses a fold expression to apply all filters in the provided order,
+  // execution short-circuits as soon as any filter returns true
+  static bool is_impossible(T n) {
+    return (ModularFilter<T, Moduli>::is_impossible(n) || ...);
+  }
 };
 
 // ============================= Power Decomposer ==============================
@@ -181,6 +188,10 @@ class PowerDecomposer {
       T x36 = pow6<T>(x3);
       T target = y - x36;
 
+      // TODO Modular filters for sums of 2 sixth powers
+
+      // TODO Binary decomposition based on (4j+1)2^m
+
       auto it = pair_sum_map_.find(target);
       if (it != pair_sum_map_.end()) {
         for (auto [x1, x2] : it->second) {
@@ -195,7 +206,7 @@ class PowerDecomposer {
   }
 
  private:
-  // TODO AI is insisting that this would be better as a vector with equal_range
+  // Faster than std::vector for a_max=3000, binary search kills performance
   std::unordered_map<T, std::vector<std::pair<size_t, size_t>>> pair_sum_map_;
 };
 
@@ -252,14 +263,9 @@ class DiophantineSolver {
             T v = t - b26;
             T v_div = v / Mod;
 
-            // Eliminate as much as possible using modular filters, manually
-            // ordered from most-pruning to least-pruning
-            if (filter16_.is_impossible(v_div) ||
-                filter9_.is_impossible(v_div) ||
-                filter13_.is_impossible(v_div) ||
-                filter7_.is_impossible(v_div) ||
-                filter31_.is_impossible(v_div) ||
-                filter19_.is_impossible(v_div)) {
+            // Eliminate as much as possible using modular filters
+            if (ModularFilterPack<T, 13, 19, 27, 31, 32, 49>::is_impossible(
+                    v_div)) {
               continue;
             }
 
@@ -289,13 +295,6 @@ class DiophantineSolver {
  private:
   // Precomputed solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
   PowerResidueTable<Mod> power_residues_;
-
-  ModularFilter<T, 16> filter16_;
-  ModularFilter<T, 9> filter9_;
-  ModularFilter<T, 13> filter13_;
-  ModularFilter<T, 7> filter7_;
-  ModularFilter<T, 31> filter31_;
-  ModularFilter<T, 19> filter19_;
 };
 
 namespace std {
