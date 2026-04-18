@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -67,6 +68,42 @@ T integer_sixth_root(T n) {
   }
   return ans;
 }
+
+// ============================ Power Residue Table ============================
+
+struct SolutionSet {
+ public:
+  void push_back(size_t v) { values_[count_++] = v; }
+
+  [[nodiscard]] const size_t* begin() const { return values_.data(); }
+  [[nodiscard]] const size_t* end() const { return values_.data() + count_; }
+
+ private:
+  std::array<size_t, 6> values_{};
+  uint8_t count_ = 0;
+};
+
+template <size_t Mod>
+class PowerResidueTable {
+ public:
+  PowerResidueTable() {
+    for (size_t x = 0; x < Mod; ++x) {
+      const size_t t = powmod(x, 6UL, Mod);
+      if (t != 0) {
+        // Ascending by construction
+        residues_[t].push_back(x);
+      }
+    }
+  }
+
+  // TODO Could this return some kind of iterator to keep SolutionSet private?
+  const SolutionSet& operator[](size_t t) const { return residues_[t]; }
+
+ private:
+  // TODO This only stores data for indices which are 1 mod 7. Are we using too
+  // much memory?
+  std::array<SolutionSet, Mod> residues_;
+};
 
 // ============================= Modular Filtering =============================
 
@@ -156,19 +193,11 @@ class PowerDecomposer {
 
 // ============================ Diophantine Solver =============================
 
+// TODO Does this make sense as a class or should it just be its own free
+// function?
 template <typename T, size_t Mod>
 class DiophantineSolver {
  public:
-  DiophantineSolver() { precompute(); }
-
-  [[nodiscard]] size_t get_precomputed_size() const {
-    size_t count = 0;
-    for (const auto& v : sols_) {
-      count += !v.empty();
-    }
-    return count;
-  }
-
   void solve(size_t a_max) {
     // Check that a1^6 + a2^6 will not overflow
     auto lim = static_cast<double>(std::numeric_limits<T>::max());
@@ -203,13 +232,9 @@ class DiophantineSolver {
           }
 
           // Number theory tells there are exactly 6 solutions for each key
-          const auto& b2_candidates = sols_[t % Mod];
+          const auto& b2_candidates = power_residues_[t % Mod];
           // TODO If a_max is too large, do we miss candidates?
           for (auto b2 : b2_candidates) {
-            if (b2 > b_max) {
-              break;
-            }
-
             T b26 = pow6<T>(b2);
 
             // Enforce that v is positive
@@ -255,35 +280,8 @@ class DiophantineSolver {
   }
 
  private:
-  // TODO Move SolutionSet, sols_, and precompute into their own class?
-  struct SolutionSet {
-   public:
-    void push_back(size_t v) { values_[count_++] = v; }
-
-    [[nodiscard]] const size_t* begin() const { return values_.data(); }
-    [[nodiscard]] const size_t* end() const { return values_.data() + count_; }
-
-    [[nodiscard]] bool empty() const { return count_ == 0; }
-
-   private:
-    std::array<size_t, 6> values_{};
-    uint8_t count_ = 0;
-  };
-
-  // TODO This only stores data for indices which are 1 mod 7. Are we using too
-  // much memory?
-  std::array<SolutionSet, Mod> sols_;
-
-  // Precompute solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
-  void precompute() {
-    for (size_t x = 0; x < Mod; ++x) {
-      const size_t t = powmod(x, 6UL, Mod);
-      if (t != 0) {
-        // Ascending by construction
-        sols_[t].push_back(x);
-      }
-    }
-  }
+  // Precomputed solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
+  PowerResidueTable<Mod> power_residues_;
 
   ModularFilter<T, 16> filter16_;
   ModularFilter<T, 9> filter9_;
@@ -304,12 +302,14 @@ struct hash<__uint128_t> {
 };
 }  // namespace std
 
-int main() {
-  auto solver = DiophantineSolver<__uint128_t, 117649>();  // 7^6
-  assert(solver.get_precomputed_size() == 16807);          // 7^5
+int main(int /*argc*/, char* argv[]) {
+  // Read in the search limit from command line arguments
+  const size_t a_max = std::stoull(argv[1]);
+
+  DiophantineSolver<__uint128_t, 117649> solver;  // 7^6
 
   auto start = std::chrono::high_resolution_clock::now();
-  solver.solve(3000);
+  solver.solve(a_max);
   auto stop = std::chrono::high_resolution_clock::now();
 
   auto duration =
