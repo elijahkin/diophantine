@@ -1,7 +1,6 @@
 #include <array>
 #include <cassert>
 #include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -101,7 +100,7 @@ class PowerResidueTable {
   };
 
   // TODO This only stores data for indices which are 1 mod 7. Are we using too
-  // much memory?
+  // much memory? Probably minor though
   std::array<SolutionSet, Mod> residues_;
 };
 
@@ -109,8 +108,8 @@ class PowerResidueTable {
 
 // TODO Generalize to sums of n kth powers. Currently, n=3 and k=6
 template <size_t Mod>
-constexpr uint64_t compute_reachable_mask() {
-  static_assert(Mod <= 63, "Mod must be <= 63");
+constexpr uint64_t compute_unreachable_mask() {
+  static_assert(Mod <= 63, "Mod must be <= 63 for uint64_t mask");
 
   // TODO Can we eliminate containers entirely and only use bitmasks?
   std::array<bool, Mod> is_sixth_power{};
@@ -118,7 +117,7 @@ constexpr uint64_t compute_reachable_mask() {
     is_sixth_power[powmod(a, 6UL, Mod)] = true;
   }
 
-  uint64_t mask = 0;
+  uint64_t reachable = 0;
   for (size_t a = 0; a < Mod; ++a) {
     if (!is_sixth_power[a]) {
       continue;
@@ -131,28 +130,29 @@ constexpr uint64_t compute_reachable_mask() {
         if (!is_sixth_power[c]) {
           continue;
         }
-        mask |= 1UL << ((a + b + c) % Mod);
+        reachable |= 1UL << ((a + b + c) % Mod);
       }
     }
   }
-  return mask;
+
+  return ~reachable;
 }
 
-// TODO Does T really belong as a template of this?
-template <typename T, size_t Mod>
+template <size_t... Moduli>
 struct ModularFilter {
-  static bool is_impossible(T n) { return !((kReachable >> (n % Mod)) & 1); }
-
-  static constexpr uint64_t kReachable = compute_reachable_mask<Mod>();
-};
-
-// TODO Can this be merged with the struct above somehow?
-template <typename T, size_t... Moduli>
-struct ModularFilterPack {
   // Uses a fold expression to apply all filters in the provided order,
   // execution short-circuits as soon as any filter returns true
-  static bool is_impossible(T n) {
-    return (ModularFilter<T, Moduli>::is_impossible(n) || ...);
+  template <typename T>
+  static constexpr bool is_impossible(T n) {
+    return (check<Moduli>(n) || ...);
+  }
+
+ private:
+  template <size_t Mod, typename T>
+  static constexpr bool check(T n) {
+    // TODO Can we pass the mask function in as a template?
+    constexpr uint64_t kUnreachable = compute_unreachable_mask<Mod>();
+    return (kUnreachable >> (n % Mod)) & 1;
   }
 };
 
@@ -185,8 +185,7 @@ class PowerDecomposer {
 
     size_t x3_max = integer_sixth_root(y);
     for (size_t x3 = 1; x3 <= x3_max; ++x3) {
-      T x36 = pow6<T>(x3);
-      T target = y - x36;
+      T target = y - pow6<T>(x3);
 
       // TODO Modular filters for sums of 2 sixth powers
 
@@ -212,90 +211,82 @@ class PowerDecomposer {
 
 // ============================ Diophantine Solver =============================
 
-// TODO Does this make sense as a class or should it just be its own free
-// function?
 template <typename T, size_t Mod>
-class DiophantineSolver {
- public:
-  void solve(size_t a_max) {
-    // Check that a1^6 + a2^6 will not overflow
-    auto lim = static_cast<double>(std::numeric_limits<T>::max());
-    assert(a_max < std::pow(0.5 * lim, 1.0 / 6) &&
-           "a_max is too large and will cause overflow");
+void solve_diophantine(size_t a_max) {
+  // Check that a1^6 + a2^6 will not overflow
+  auto lim = static_cast<double>(std::numeric_limits<T>::max());
+  assert(a_max < integer_sixth_root(0.5 * lim) &&
+         "a_max is too large and will cause overflow");
 
-    // Maximum value of v_div that can occur:
-    // v <= a1^6 + a2^6 <= 2 * a_max^6
-    T max_v_div = (pow6<T>(a_max) * 2) / Mod;
-    PowerDecomposer<T> decomposer(max_v_div);
+  // Precompute solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
+  PowerResidueTable<Mod> power_residues;
+
+  // Maximum value of v_div that can occur:
+  // v <= a1^6 + a2^6 <= 2 * a_max^6
+  T max_v_div = (pow6<T>(a_max) * 2) / Mod;
+  PowerDecomposer<T> decomposer(max_v_div);
 
 #pragma omp parallel for schedule(guided)
-    for (size_t a1 = 1; a1 <= a_max; ++a1) {
-      T a16 = pow6<T>(a1);
-      for (size_t a2 = 1; a2 <= a1; ++a2) {
-        // a1 and a2 both being divisible by either 2 or 3 imply the solution is
-        // non-primitive
-        if ((a1 % 2 == 0 && a2 % 2 == 0) || (a1 % 3 == 0 && a2 % 3 == 0)) {
-          continue;
-        }
+  for (size_t a1 = 1; a1 <= a_max; ++a1) {
+    T a16 = pow6<T>(a1);
+    for (size_t a2 = 1; a2 <= a1; ++a2) {
+      // a1 and a2 both being divisible by either 2 or 3 imply the solution is
+      // non-primitive
+      if ((a1 % 2 == 0 && a2 % 2 == 0) || (a1 % 3 == 0 && a2 % 3 == 0)) {
+        continue;
+      }
 
-        T a26 = pow6<T>(a2);
+      T a26 = pow6<T>(a2);
 
-        // For b1 such that b1^6 <= a1^6 + a2^6
-        size_t b_max = integer_sixth_root(a16 + a26);
-        for (size_t b1 = 1; b1 <= b_max; ++b1) {
-          T b16 = pow6<T>(b1);
-          T t = a16 + a26 - b16;
+      // For b1 such that b1^6 <= a1^6 + a2^6
+      size_t b_max = integer_sixth_root(a16 + a26);
+      for (size_t b1 = 1; b1 <= b_max; ++b1) {
+        T t = a16 + a26 - pow6<T>(b1);
 
-          // Number theory tells there are either 0 or 6 solutions for each key
-          const auto& b2_candidates = power_residues_[t % Mod];
-          // TODO We are missing some candidates, e.g. when a1 = 1117, a2 =
-          // 770, and b1 = 1092, we never get b2 = 861.
-          for (auto b2 : b2_candidates) {
-            if (b2 > b1) {
-              break;  // Enforce b1 >= b2; candidates are ascending
-            }
+        // Number theory tells there are either 0 or 6 solutions for each key
+        const auto& b2_candidates = power_residues[t % Mod];
+        for (auto b2 : b2_candidates) {
+          if (b2 > b1) {
+            break;  // Enforce b1 >= b2; candidates are ascending
+          }
 
-            T b26 = pow6<T>(b2);
-            if (b26 >= t) {
-              break;  // Enforce v > 0; candidates are ascending
-            }
+          T b26 = pow6<T>(b2);
+          if (b26 >= t) {
+            break;  // Enforce v > 0; candidates are ascending
+          }
 
-            T v = t - b26;
-            T v_div = v / Mod;
+          // t - b26 is guaranteed to be divisible by Mod
+          T v_div = (t - b26) / Mod;
 
-            // Eliminate as much as possible using modular filters
-            if (ModularFilterPack<T, 13, 19, 27, 31, 32, 49>::is_impossible(
-                    v_div)) {
-              continue;
-            }
+          // Eliminate as much as possible using modular filters
+          if (ModularFilter<13, 19, 27, 31, 32, 49>::is_impossible(v_div)) {
+            continue;
+          }
 
-            // Try to express v_div as a sum of three sixth powers
-            auto cs = decomposer.try_decompose(v_div);
-            if (cs.has_value()) {
-              // If we can, we've found a solution!
-              auto [c1, c2, c3] = cs.value();
-              size_t b3 = 7 * c1;
-              size_t b4 = 7 * c2;
-              size_t b5 = 7 * c3;
+          // Try to express v_div as a sum of three sixth powers
+          auto cs = decomposer.try_decompose(v_div);
+          if (cs.has_value()) {
+            // If we can, we've found a solution!
+            auto [c1, c2, c3] = cs.value();
+            size_t b3 = 7 * c1;
+            size_t b4 = 7 * c2;
+            size_t b5 = 7 * c3;
 
-              std::ostringstream oss;
-              oss << a1 << "^6 + " << a2 << "^6 = " << b1 << "^6 + " << b2
-                  << "^6 + " << b3 << "^6 + " << b4 << "^6 + " << b5 << "^6\n";
+            std::ostringstream oss;
+            oss << a1 << "^6 + " << a2 << "^6 = " << b1 << "^6 + " << b2
+                << "^6 + " << b3 << "^6 + " << b4 << "^6 + " << b5 << "^6\n";
 
-              // Lock while writing to avoid garbled output
+            // Lock while writing to avoid garbled output
 #pragma omp critical
-              std::cout << oss.str();
-            }
+            std::cout << oss.str();
           }
         }
       }
     }
   }
+}
 
- private:
-  // Precomputed solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
-  PowerResidueTable<Mod> power_residues_;
-};
+// =================================== Usage ===================================
 
 namespace std {
 template <>
@@ -312,10 +303,10 @@ int main(int /*argc*/, char* argv[]) {
   // Read in the search limit from command line arguments
   const size_t a_max = std::stoull(argv[1]);
 
-  DiophantineSolver<__uint128_t, 117649> solver;  // 7^6
+  const size_t mod = 117649;  // 7^6
 
   auto start = std::chrono::high_resolution_clock::now();
-  solver.solve(a_max);
+  solve_diophantine<__uint128_t, mod>(a_max);
   auto stop = std::chrono::high_resolution_clock::now();
 
   auto duration =
