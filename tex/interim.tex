@@ -1,0 +1,55 @@
+\documentclass[11pt, letterpaper]{article}
+
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\floatplacement{figure}{H}
+
+\title{Parallelization of Diophantine Solvers}
+\author{Hamza Iseric, Elijah Kin, Cameron Yeagle}
+\date{April 20, 2026}
+
+\begin{document}
+
+\maketitle
+
+\section*{Current Results}
+We now have a working implementation of the algorithm from \cite{RM03} using OpenMP. This doubles as a serial C++ version by simply compiling without the \texttt{-fopenmp} flag. Using this code with a maximum $a_1$ value of $3000$, we are able to find the first several rows of Table 1 of \cite{RM03}:
+\begin{align*}
+  1117^6 + 770^6 &= 602^6 + 212^6 + 1092^6 + 861^6 + 84^6 \\
+  2041^6 + 691^6 &= 1893^6 + 1468^6 + 1407^6 + 1302^6 + 1246^6 \\
+  2441^6 + 752^6 &= 2096^6 + 1266^6 + 2184^6 + 1484^6 + 1239^6 \\
+  2827^6 + 151^6 &= 1488^6 + 390^6 + 2653^6 + 2296^6 + 1281^6 \\
+  2959^6 + 2470^6 &= 2481^6 + 850^6 + 2954^6 + 798^6 + 420^6
+\end{align*}
+We record the runtimes for various numbers of OpenMP threads run on Zaratan in the table below.
+\begin{figure}
+  \centering
+  \begin{tabular}{|l|c|c|c|c|c|c|}
+    \hline
+    \# Threads & 1 & 2 & 4 & 8 & 16 & 32 \\
+    \hline
+    Runtime (ms) & 141384 & 71097 & 34081 & 17704 & 9286 & 4794 \\
+    \hline
+  \end{tabular}
+\end{figure}
+We observe approximately a 2x reduction in runtime when the number of threads is doubled, as desired. For comparison, the 2002 paper mentions that it took 5 minutes to compute the single smallest solution. Here, we compute the smallest five solutions in under 5 seconds with 32 threads. All code may be found in our project repository: \url{https://github.com/elijahkin/diophantine}
+
+\section*{Division of Work}
+\begin{itemize}
+  \item Elijah is responsible for the initial OpenMP implementation, which was used to obtain the solutions above. It remains to implement more algorithmic optimizations to further speed up the program (tighter modular restrictions in \texttt{try\_decompose}, more precomputation).
+  \item Hamza is responsible for porting the OpenMP version to CUDA. This work is in progress.
+  \item Cameron is responsible for exploring how our code can be adapted to solve other Diophantine equations, namely
+  \begin{equation*}
+    a_1^6 = b_1^6 + b_2^b + b_3^6 + b_4^6 + b_5^6 + b_6^6
+  \end{equation*}
+  for which \href{http://euler.free.fr/}{no solutions are known}. The analogous method involves precomputing the solutions to $x^6 \equiv t \mod 7^6$ and iterating $a_1$ over values congruent to $1 \mod 7$. The precomputation then informs possible values for $b_1$. For each of these values, we compute $(a_1^6 - b_1^6) / 7^6$ and determine if this quantity can be expressed as a sum of five sixth powers in a manner similar to \texttt{try\_decompose}.
+\end{itemize}
+
+\bibliographystyle{alpha}
+\bibliography{diophantine}
+
+\end{document}
