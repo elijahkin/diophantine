@@ -106,53 +106,56 @@ class PowerResidueTable {
 
 // ============================= Modular Filtering =============================
 
-// TODO Generalize to sums of n kth powers. Currently, n=3 and k=6
-template <size_t Mod>
-constexpr uint64_t compute_unreachable_mask() {
-  static_assert(Mod <= 63, "Mod must be <= 63 for uint64_t mask");
-
-  // TODO Can we eliminate containers entirely and only use bitmasks?
-  std::array<bool, Mod> is_sixth_power{};
-  for (size_t a = 0; a < Mod; ++a) {
-    is_sixth_power[powmod(a, 6UL, Mod)] = true;
+// TODO Can we used __uint128_t instead for larger moduli?
+template <size_t N, size_t K>
+struct ImpossibleSumPowers {
+  // TODO Can we compute this function or make it more clear/simpler?
+  template <size_t Mod>
+  static constexpr uint64_t add_residue_sets(uint64_t lhs, uint64_t rhs) {
+    constexpr uint64_t kMask = (1UL << Mod) - 1;
+    uint64_t result = 0;
+    while (rhs) {
+      const int i = __builtin_ctzll(rhs);
+      result |= ((lhs << i) | (lhs >> (Mod - i))) & kMask;
+      rhs &= rhs - 1;
+    }
+    return result;
   }
 
-  uint64_t reachable = 0;
-  for (size_t a = 0; a < Mod; ++a) {
-    if (!is_sixth_power[a]) {
-      continue;
+  template <size_t Mod>
+  static constexpr uint64_t get_mask() {
+    static_assert(Mod <= 63, "Mod must be <= 63 for uint64_t mask");
+
+    uint64_t kth_powers = 0;
+    for (size_t a = 0; a < Mod; ++a) {
+      kth_powers |= 1UL << powmod(a, K, Mod);
     }
-    for (size_t b = 0; b < Mod; ++b) {
-      if (!is_sixth_power[b]) {
-        continue;
-      }
-      for (size_t c = 0; c < Mod; ++c) {
-        if (!is_sixth_power[c]) {
-          continue;
-        }
-        reachable |= 1UL << ((a + b + c) % Mod);
-      }
+
+    // Start from {0}; after i iterations, `reachable` holds all residues
+    // expressible as a sum of exactly i Kth powers
+    uint64_t reachable = 1UL;  // {0}
+    for (size_t i = 0; i < N; ++i) {
+      reachable = add_residue_sets<Mod>(reachable, kth_powers);
     }
+
+    return ~reachable;
   }
+};
 
-  return ~reachable;
-}
-
-template <size_t... Moduli>
+template <typename Policy, size_t... Moduli>
 struct ModularFilter {
   // Uses a fold expression to apply all filters in the provided order,
   // execution short-circuits as soon as any filter returns true
   template <typename T>
-  static constexpr bool is_impossible(T n) {
+  static constexpr bool includes(T n) {
     return (check<Moduli>(n) || ...);
   }
 
  private:
   template <size_t Mod, typename T>
   static constexpr bool check(T n) {
-    // TODO Can we pass the mask function in as a template?
-    constexpr uint64_t kUnreachable = compute_unreachable_mask<Mod>();
-    return (kUnreachable >> (n % Mod)) & 1;
+    constexpr auto kMask = Policy::template get_mask<Mod>();
+    return (kMask >> (n % Mod)) & 1;
   }
 };
 
@@ -187,7 +190,10 @@ class PowerDecomposer {
     for (size_t x3 = 1; x3 <= x3_max; ++x3) {
       T target = y - pow6<T>(x3);
 
-      // TODO Modular filters for sums of 2 sixth powers
+      if (ModularFilter<ImpossibleSumPowers<2, 6>, 13, 19, 31, 37, 43,
+                        61>::includes(target)) {
+        continue;
+      }
 
       // TODO Binary decomposition based on (4j+1)2^m
 
@@ -259,7 +265,8 @@ void solve_diophantine(size_t a_max) {
           T v_div = (t - b26) / Mod;
 
           // Eliminate as much as possible using modular filters
-          if (ModularFilter<13, 19, 27, 31, 32, 49>::is_impossible(v_div)) {
+          if (ModularFilter<ImpossibleSumPowers<3, 6>, 13, 19, 27, 31, 32,
+                            49>::includes(v_div)) {
             continue;
           }
 
