@@ -1,4 +1,4 @@
-CC = clang++
+CC = g++
 CFLAGS = -std=c++20 -O3 -Wall -Wextra -Wpedantic -fopenmp
 
 all: solve_omp

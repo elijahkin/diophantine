@@ -71,6 +71,8 @@ size_t integer_sixth_root(T n) {
 
 // ============================ Power Residue Table ============================
 
+// Maps each t which is 1 mod 7 to the six solutions of x^6 = t mod 7^6
+// TODO Too many magic numbers inside here...
 template <size_t Mod>
 class PowerResidueTable {
  public:
@@ -79,29 +81,35 @@ class PowerResidueTable {
       const size_t t = powmod(x, 6UL, Mod);
       if (t != 0) {
         // Ascending by construction
-        residues_[t].push_back(x);
+        residues_[t / 7].push_back(x);
       }
     }
   }
 
-  std::span<const size_t> operator[](size_t t) const { return residues_[t]; }
+  std::span<const size_t> operator[](size_t t) const {
+    if (t % 7 != 1) {
+      return {};
+    }
+    return residues_[t / 7];
+  }
 
  private:
-  struct SolutionSet {
+  // A simple data structure for emulating the behavior of std::vector when a
+  // fixed max size is known at compile time
+  template <typename T, size_t N>
+  struct SmallVector {
    public:
-    void push_back(size_t v) { values_[count_++] = v; }
+    void push_back(T v) { values_[count_++] = v; }
 
-    [[nodiscard]] const size_t* begin() const { return values_.data(); }
-    [[nodiscard]] const size_t* end() const { return values_.data() + count_; }
+    [[nodiscard]] const T* begin() const { return values_.data(); }
+    [[nodiscard]] const T* end() const { return values_.data() + count_; }
 
    private:
-    std::array<size_t, 6> values_{};
-    uint8_t count_ = 0;
+    std::array<T, N> values_{};
+    size_t count_ = 0;
   };
 
-  // TODO This only stores data for indices which are 1 mod 7. Are we using too
-  // much memory? Probably minor though
-  std::array<SolutionSet, Mod> residues_;
+  std::array<SmallVector<size_t, 6>, Mod / 7> residues_;
 };
 
 // ============================= Modular Filtering =============================
