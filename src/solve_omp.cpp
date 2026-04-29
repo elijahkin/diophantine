@@ -304,6 +304,7 @@ void solve_diophantine(size_t a_max) {
 // =================================== Usage ===================================
 
 namespace std {
+#if !defined(__GLIBCXX_TYPE_INT_N_0)
 template <>
 struct hash<__uint128_t> {
   size_t operator()(__uint128_t x) const {
@@ -312,6 +313,7 @@ struct hash<__uint128_t> {
     return std::hash<uint64_t>{}(hi ^ lo);
   }
 };
+#endif
 }  // namespace std
 
 int main(int /*argc*/, char* argv[]) {
