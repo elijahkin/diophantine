@@ -186,31 +186,44 @@ class PowerDecomposer {
     }
   }
 
-  // Try to express y as a sum of three sixth powers x1^6 + x2^6 + x3^6
-  std::optional<std::tuple<size_t, size_t, size_t>> try_decompose(T y) const {
+  // Try to express y as a sum of five sixth powers
+  std::optional<std::tuple<size_t, size_t, size_t, size_t, size_t>>try_decompose(T y) const {
     // Deep pruning for 7, 8, and 9
+    // TODO Generalize deep pruning for arbitrary sixth-power sums
     if ((y % 7 == 0 && y % 117649 != 0) || (y % 8 == 0 && y % 64 != 0) ||
         (y % 9 == 0 && y % 729 != 0)) {
       return std::nullopt;
     }
 
-    size_t x3_max = integer_sixth_root(y);
-    for (size_t x3 = 1; x3 <= x3_max; ++x3) {
-      T target = y - pow6<T>(x3);
+    // Outermost loop: x5 (smallest value)
+    size_t x5_max = integer_sixth_root(y);
+    for (size_t x5 = 1; x5 <= x5_max; ++x5) {
+      T rem5 = y - pow6<T>(x5);
 
-      if (ModularFilter<ImpossibleSumPowers<2, 6>, 13, 19, 31, 37, 43,
-                        61>::includes(target)) {
-        continue;
-      }
+      // Middle loop: x4 >= x5
+      size_t x4_max = integer_sixth_root(rem5);
+      for (size_t x4 = x5; x4 <= x4_max; ++x4) {
+        T rem4 = rem5 - pow6<T>(x4);
 
-      // TODO Binary decomposition based on (4j+1)2^m
+        // Inner loop: x3 >= x4
+        size_t x3_max = integer_sixth_root(rem4);
+        for (size_t x3 = x4; x3 <= x3_max; ++x3) {
+          T target = rem4 - pow6<T>(x3);
 
-      auto it = pair_sum_map_.find(target);
-      if (it != pair_sum_map_.end()) {
-        for (auto [x1, x2] : it->second) {
-          // Enforce ordering to avoid duplicate permutations
-          if (x3 <= x2) {
-            return std::tuple{x1, x2, x3};
+          if (ModularFilter<ImpossibleSumPowers<2, 6>, 13, 19, 31, 37, 43,
+                            61>::includes(target)) {
+            continue;
+          }
+
+          // Look up target = x1^6 + x2^6 in the pair map
+          auto it = pair_sum_map_.find(target);
+          if (it != pair_sum_map_.end()) {
+            for (auto [x1, x2] : it->second) {
+              // Enforce ordering: x2 >= x3
+              if (x3 <= x2) {
+                return std::tuple{x1, x2, x3, x4, x5};
+              }
+            }
           }
         }
       }
@@ -227,75 +240,61 @@ class PowerDecomposer {
 
 template <typename T, size_t Mod>
 void solve_diophantine(size_t a_max) {
-  // Check that a1^6 + a2^6 will not overflow
+  // Check that a1^6 will not overflow
   auto lim = static_cast<double>(std::numeric_limits<T>::max());
-  assert(a_max < integer_sixth_root(0.5 * lim) &&
+  assert(a_max < integer_sixth_root(lim) &&
          "a_max is too large and will cause overflow");
 
   // Precompute solutions to x^6 = t mod 7^6 for 0 < t < 7^6 and t = 1 mod 7
   PowerResidueTable<Mod> power_residues;
 
   // Maximum value of v_div that can occur:
-  // v <= a1^6 + a2^6 <= 2 * a_max^6
-  T max_v_div = (pow6<T>(a_max) * 2) / Mod;
+  // v <= a1^6 <= a_max^6
+  T max_v_div = pow6<T>(a_max) / Mod;
   PowerDecomposer<T> decomposer(max_v_div);
 
 #pragma omp parallel for schedule(guided)
   for (size_t a1 = 1; a1 <= a_max; ++a1) {
+    // Skip non-primitive solutions.
+    if (a1 % 7 == 0) continue;
+
     T a16 = pow6<T>(a1);
-    for (size_t a2 = 1; a2 <= a1; ++a2) {
-      // a1 and a2 both being divisible by either 2 or 3 imply the solution is
-      // non-primitive
-      if ((a1 % 2 == 0 && a2 % 2 == 0) || (a1 % 3 == 0 && a2 % 3 == 0)) {
+
+    // Since our congruence is now a1^6 \equiv b1^6 (mod 7^6), 
+    // we query the table directly using a16.
+    const auto& b1_candidates = power_residues[a16 % Mod];
+    for (auto b1 : b1_candidates) {
+      if (b1 >= a1) {
+        break;  // Enforce a1 > b1 to avoid negative v 
+      }
+
+      T b16 = pow6<T>(b1);
+      T v_div = (a16 - b16) / Mod;
+
+      // Eliminate as much as possible using modular filters
+      if (ModularFilter<ImpossibleSumPowers<5, 6>, 13, 19, 31, 37, 43,
+                        61>::includes(v_div)) {
         continue;
       }
 
-      T a26 = pow6<T>(a2);
+      // Try to express v_div as a sum of five sixth powers
+      auto cs = decomposer.try_decompose(v_div);
+      if (cs.has_value()) {
+        // If we can, we've found a solution!
+        auto [c1, c2, c3, c4, c5] = cs.value();
+        size_t b2 = 7 * c1;
+        size_t b3 = 7 * c2;
+        size_t b4 = 7 * c3;
+        size_t b5 = 7 * c4;
+        size_t b6 = 7 * c5;
 
-      // For b1 such that b1^6 <= a1^6 + a2^6
-      size_t b_max = integer_sixth_root(a16 + a26);
-      for (size_t b1 = 1; b1 <= b_max; ++b1) {
-        T t = a16 + a26 - pow6<T>(b1);
+        std::ostringstream oss;
+        oss << a1 << "^6 = " << b1 << "^6 + " << b2 << "^6 + " << b3
+            << "^6 + " << b4 << "^6 + " << b5 << "^6 + " << b6 << "^6\n";
 
-        // Number theory tells there are either 0 or 6 solutions for each key
-        const auto& b2_candidates = power_residues[t % Mod];
-        for (auto b2 : b2_candidates) {
-          if (b2 > b1) {
-            break;  // Enforce b1 >= b2; candidates are ascending
-          }
-
-          T b26 = pow6<T>(b2);
-          if (b26 >= t) {
-            break;  // Enforce v > 0; candidates are ascending
-          }
-
-          // t - b26 is guaranteed to be divisible by Mod
-          T v_div = (t - b26) / Mod;
-
-          // Eliminate as much as possible using modular filters
-          if (ModularFilter<ImpossibleSumPowers<3, 6>, 13, 19, 27, 31, 32,
-                            49>::includes(v_div)) {
-            continue;
-          }
-
-          // Try to express v_div as a sum of three sixth powers
-          auto cs = decomposer.try_decompose(v_div);
-          if (cs.has_value()) {
-            // If we can, we've found a solution!
-            auto [c1, c2, c3] = cs.value();
-            size_t b3 = 7 * c1;
-            size_t b4 = 7 * c2;
-            size_t b5 = 7 * c3;
-
-            std::ostringstream oss;
-            oss << a1 << "^6 + " << a2 << "^6 = " << b1 << "^6 + " << b2
-                << "^6 + " << b3 << "^6 + " << b4 << "^6 + " << b5 << "^6\n";
-
-            // Lock while writing to avoid garbled output
+        // Lock while writing to avoid garbled output
 #pragma omp critical
-            std::cout << oss.str();
-          }
-        }
+        std::cout << oss.str();
       }
     }
   }
@@ -303,6 +302,9 @@ void solve_diophantine(size_t a_max) {
 
 // =================================== Usage ===================================
 
+// libstdc++ (Linux) does not provide hash<__uint128_t>, so we define it there.
+// libc++ (macOS) already provides it.
+#ifdef __GLIBCXX__
 namespace std {
 template <>
 struct hash<__uint128_t> {
@@ -313,6 +315,7 @@ struct hash<__uint128_t> {
   }
 };
 }  // namespace std
+#endif
 
 int main(int /*argc*/, char* argv[]) {
   // Read in the search limit from command line arguments
