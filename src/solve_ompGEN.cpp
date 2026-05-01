@@ -80,16 +80,13 @@ class PowerResidueTable {
       const size_t t = powmod(x, 6UL, Mod);
       if (t != 0) {
         // Ascending by construction
-        residues_[t / 7].push_back(x);
+        residues_[t].push_back(x);
       }
     }
   }
 
   std::span<const size_t> operator[](size_t t) const {
-    if (t % 7 != 1) {
-      return {};
-    }
-    return residues_[t / 7];
+    return residues_[t];
   }
 
  private:
@@ -108,7 +105,7 @@ class PowerResidueTable {
     size_t count_ = 0;
   };
 
-  std::array<SmallVector<size_t, 6>, Mod / 7> residues_;
+  std::array<SmallVector<size_t, 6>, Mod> residues_;
 };
 
 // ============================= Modular Filtering =============================
@@ -212,17 +209,10 @@ class PowerDecomposer {
   // upper_bound: ordering constraint from previous level (current x <= this)
   // remainder:      remaining value after subtracting all previously chosen powers
   template <size_t Depth>
-  bool scan(std::array<size_t, N>& result, size_t upper_bound, T remainder) const {
+  __attribute__((always_inline)) inline bool scan(std::array<size_t, N>& result, size_t upper_bound, T remainder) const {
 
     // Base case
     if constexpr (Depth == N - 2) {
-      // TODO CAM Apply intermediate modular filters at each scan depth for additional pruning (e.g., check if remainder can be a sum of
-      // TODO based on template, deduce what moduli to use
-      if (ModularFilter<ImpossibleSumPowers<2, 6>, 13, 19, 31, 37, 43,
-                        61>::includes(remainder)) {
-        return false;
-      }
-      
       // Now we only have 2 terms to decompose (x1^6 + x2^6 = remainder)
       auto it = pair_sum_map_.find(remainder);
       if (it != pair_sum_map_.end()) {
@@ -240,8 +230,10 @@ class PowerDecomposer {
       // Recursive case: pick x for slot (N - 1 - Depth)
       constexpr size_t slot = N - 1 - Depth;
       size_t x_max = integer_sixth_root(remainder);
+      if (x_max > upper_bound) {
+        x_max = upper_bound;
+      }
 
-      // TODO CAM for to prune for impossible cases (since x always starts at 1)
       for (size_t x = 1; x <= x_max; ++x) {
         result[slot] = x;
         if (scan<Depth + 1>(result, x, remainder - pow6<T>(x))) {
@@ -296,7 +288,7 @@ class DiophantineSolver {
  private:
   // Recursive LHS scan to find a_i values (Note: depth 0 is handled by parallel for loop, hence we start with 1)
   template <size_t Depth>
-  void scan_lhs(std::array<size_t, NL>& a_vals, size_t upper_bound, T lhs_sum) const {
+  __attribute__((always_inline)) inline void scan_lhs(std::array<size_t, NL>& a_vals, size_t upper_bound, T lhs_sum) const {
     if constexpr (Depth == NL) {
       // NL=2: skip when both a-values share a factor of 2 or 3 (non-primitive)
       // TODO CAM Generalize primitiv check for NL > 2
@@ -321,7 +313,7 @@ class DiophantineSolver {
 
   // Recursive RHS scan ot find b_i values: (Note: base case is NL-1 because the last b term is handled by the residue table)
   template <size_t Depth>
-  void scan_rhs(const std::array<size_t, NL>& a_vals, std::array<size_t, NR>& b_vals, T remainder, size_t upper_bound) const {
+  __attribute__((always_inline)) inline void scan_rhs(const std::array<size_t, NL>& a_vals, std::array<size_t, NR>& b_vals, T remainder, size_t upper_bound) const {
     if constexpr (Depth == NL - 1) {
       // Base case: do residue table lookup + decomposition
       residue_and_decompose(a_vals, b_vals, remainder);
@@ -337,7 +329,7 @@ class DiophantineSolver {
   }
 
   // Uses residue table for b_vals[NL-1], then calls decomposer for the rest.
-  void residue_and_decompose(const std::array<size_t, NL>& a_vals, std::array<size_t, NR>& b_vals, T remainder) const {
+  __attribute__((always_inline)) inline void residue_and_decompose(const std::array<size_t, NL>& a_vals, std::array<size_t, NR>& b_vals, T remainder) const {
     constexpr size_t res_slot = NL - 1;
 
     const auto& candidates = power_residues_[remainder % Mod];
@@ -354,8 +346,8 @@ class DiophantineSolver {
 
       T v_div = (remainder - b_res_pow) / Mod;
 
-      if (ModularFilter<ImpossibleSumPowers<N_FREE, 6>, 13, 19, 31, 37, 43,
-                        61>::includes(v_div)) {
+      if (ModularFilter<ImpossibleSumPowers<N_FREE, 6>, 13, 19, 27, 31, 32,
+                        49>::includes(v_div)) {
         continue;
       }
 
