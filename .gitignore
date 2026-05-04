@@ -1,2 +1,4 @@
 bin/*
 !.gitkeep
+logs/
+slurm-*.out
