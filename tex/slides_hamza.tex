@@ -1,0 +1,225 @@
+\documentclass[]{beamer}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usetheme{Copenhagen}
+\usefonttheme[onlymath]{serif}
+
+\title{Parallelization of Diophantine Solvers}
+\author{Hamza Iseric, Elijah Kin, Cameron Yeagle}
+\date{May 5, 2026}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Introduction}
+  A \emph{Diophantine} equation is an equation for which we are only interested in integer solutions.
+  \pause
+  For instance, Pythagorean triples (e.g. $3^2 + 4^2 = 5^2$) are the solutions of the Diophantine equation $a^2 + b^2 = c^2$, while Fermat's last theorem famously states that $a^n + b^n = c^n$ has no solutions in the positive integers for $n \geq 3$.
+  \pause
+  \bigskip
+
+  Question: Does
+  \begin{equation*}
+    a_1^6 + a_2^6 = b_1^6 + b_2^6 + b_3^6 + b_4^6 + b_5^6
+  \end{equation*}
+  have any solutions in the positive integers?
+  \pause
+  \bigskip
+
+  Answer: Yes! The smallest was found in 2002:
+  \begin{equation*}
+    1117^6 + 770^6 = 1092^6 + 861^6 + 602^6 + 212^6 + 84^6
+  \end{equation*}
+\end{frame}
+
+\begin{frame}{Resta-Meyrignac Algorithm}
+  The crux of the search was that sixth powers mod $7$ can be congruent only to either $0$ or $1$ (and likewise for mod $8$ and mod $9$).
+  \pause
+  Then, if we are only interested in primitive solutions, at least one of $a_1$ and $a_2$ is not divisible by $7$.
+  \pause
+  Hence, mod $7$ the left-hand side is either $1$ or $2$.
+  \pause
+  Since there are only five terms on the right-hand side with each congruent to either $0$ or $1$, this means that at least three of the $b_i$ are divisible by $7$.
+  \pause
+  This yields the helpful restriction
+  \begin{equation*}
+    b_2^6 \equiv a_1^6 + a_2^6 - b_1^6 \mod 7^6.
+  \end{equation*}
+  \pause
+  Finally, we define $v = a_1^6 + a_2^6 - (b_1^6 + b_2^6)$ and check if we can decompose $v / 7^6 = c_1^6 + c_2^6 + c_3^6$.
+\end{frame}
+
+\begin{frame}{CUDA Implementation: Host Setup}
+  The CUDA program keeps the Resta-Meyrignac search, but moves the expensive
+  candidate testing to the GPU.
+  \pause
+  \bigskip
+
+  Before launching the kernel, the CPU builds two lookup tables:
+  \begin{itemize}
+    \item a residue table modulo $7^6 = 117649$ for possible $b_2$ values;
+    \item a sorted table of pair sums $x^6 + y^6$ used later to recognize
+      two of the remaining three terms.
+  \end{itemize}
+  \pause
+
+  These tables are copied once to GPU memory with \texttt{cudaMemcpy}, so all
+  GPU threads can reuse the same precomputed data.
+\end{frame}
+
+\begin{frame}{CUDA Implementation: Parallel Work Split}
+  The main search space is the triangular set
+  \begin{equation*}
+    1 \leq a_2 \leq a_1 \leq a_{\max}.
+  \end{equation*}
+  \pause
+
+  The kernel assigns each CUDA thread a linear index into this triangular
+  space, then converts it back to a pair $(a_1,a_2)$ using triangular numbers.
+  \pause
+  \bigskip
+
+  Each thread then advances by a grid-wide stride:
+  \begin{equation*}
+    \text{pair\_index} =
+    \text{thread id},\ \text{thread id} + \text{grid size},\ldots
+  \end{equation*}
+  \pause
+
+  This gives a simple load distribution without storing all $(a_1,a_2)$ pairs
+  explicitly.
+\end{frame}
+
+\begin{frame}{CUDA Implementation: Filtering Candidates}
+  For each assigned $(a_1,a_2)$, the kernel computes
+  \begin{equation*}
+    L = a_1^6 + a_2^6
+  \end{equation*}
+  using 128-bit integer arithmetic.
+  \pause
+
+  It first skips non-primitive candidates where both $a_i$ are divisible by
+  $2$ or both are divisible by $3$.
+  \pause
+  \bigskip
+
+  Then it loops over possible $b_1$ values and uses the modulo $7^6$ table to
+  find only compatible $b_2$ residues:
+  \begin{equation*}
+    b_2^6 \equiv L - b_1^6 \pmod{7^6}.
+  \end{equation*}
+  \pause
+
+  Additional modular filters modulo $13,19,27,31,32,49$ remove values that
+  cannot be written as a sum of three sixth powers.
+\end{frame}
+
+\begin{frame}{CUDA Implementation: Final Decomposition}
+  After choosing $b_1$ and $b_2$, the remaining value is
+  \begin{equation*}
+    v/7^6 =
+    \frac{a_1^6 + a_2^6 - b_1^6 - b_2^6}{7^6}.
+  \end{equation*}
+  \pause
+
+  The device function \texttt{try\_decompose} checks whether
+  \begin{equation*}
+    v/7^6 = c_1^6 + c_2^6 + c_3^6.
+  \end{equation*}
+  \pause
+
+  It loops over $c_3$, applies more modular impossibility filters, and then
+  binary-searches the sorted pair table for
+  \begin{equation*}
+    c_1^6 + c_2^6 = v/7^6 - c_3^6.
+  \end{equation*}
+  \pause
+
+  If this succeeds, the stored solution is
+  $(a_1,a_2,b_1,b_2,7c_1,7c_2,7c_3)$.
+\end{frame}
+
+\begin{frame}{CUDA Implementation: Collecting Results}
+  Multiple GPU threads may find solutions at the same time, so the kernel uses
+  \texttt{atomicAdd} to reserve an output slot safely.
+  \pause
+  \bigskip
+
+  After the kernel finishes:
+  \begin{itemize}
+    \item the host copies the solution count and stored solutions back;
+    \item solutions are sorted before printing;
+    \item the program reports total runtime and GPU device information.
+  \end{itemize}
+  \pause
+
+  In short, CUDA parallelizes the outer $(a_1,a_2)$ search, while modular
+  arithmetic and precomputed tables keep each thread's inner search small.
+\end{frame}
+
+\begin{frame}{Performance: OpenMP}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{../results/omp_thread_sweep_a3000_20260504_232326.png}
+  \end{figure}
+
+  \small For $a_{\max}=3000$, OpenMP scales from $506{,}518$ ms at 1 thread
+  to $101{,}121$ ms at 6 threads, about a $5\times$ speedup.
+\end{frame}
+
+\begin{frame}{Performance: CUDA at $a_{\max}=3000$}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{../results/cuda_thread_sweep_a3000_job6758665.png}
+  \end{figure}
+
+  \small Best runtime was $8{,}738$ ms at 256 threads per block. Changing
+  threads per block gave only modest variation.
+\end{frame}
+
+\begin{frame}{Performance: CUDA at $a_{\max}=5000$}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{../results/cuda_thread_sweep_a5000_job6758900.png}
+  \end{figure}
+
+  \small For the larger problem, the best runtime was $102{,}538$ ms at 256
+  threads per block, but the scaling curve stayed much flatter than OpenMP.
+\end{frame}
+
+\begin{frame}{Performance Takeaways}
+  \begin{itemize}
+    \item OpenMP shows strong thread scaling for this search on the CPU.
+    \item CUDA gives lower absolute runtime, but the current kernel does not scale strongly with threads per block.
+    \item The bottleneck is implementation quality of the GPU kernel, not the absence of parallel work in the problem itself.
+  \end{itemize}
+
+  \bigskip
+  No solutions found for $a_1<730{,}000$ (J.-C. Meyrignac, et al.).
+\end{frame}
+
+\begin{frame}{Generalizability}
+
+  New Equation:
+  \begin{equation*}
+    a_1^6 = b_1^6 + b_2^6 + b_3^6 + b_4^6 + b_5^6 +b^6_6
+  \end{equation*}
+  \pause
+  Key Changes: 1 LHS term means $a_1^6$ is strictly congruent to $1$ modulo $7$. \pause This implies that only 1 RHS term is 1 modulo 7, rest are 0. Hence,
+
+  $$a_1^6\equiv b_1^6 \pmod{7^6}$$
+
+  avoiding $O(N)$ search for $b_1$.
+\end{frame}
+
+\begin{frame}{References}
+  \nocite{*}
+  \bibliography{diophantine.bib}
+  \bibliographystyle{abbrv}
+\end{frame}
+
+\end{document}

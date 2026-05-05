@@ -2,3 +2,8 @@ bin/*
 !.gitkeep
 logs/
 slurm-*.out
+*.out
+*.snv
+*.nav
+*.log
+*.aux
