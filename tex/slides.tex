@@ -217,7 +217,7 @@
   \begin{itemize}
     \item OpenMP shows strong thread scaling for this search on the CPU.
     \item CUDA gives lower absolute runtime, but the current kernel does not scale strongly with threads per block.
-    \item The bottleneck is implementation quality of the GPU kernel, not the absence of parallel work in the problem itself.
+    \item We might need to tackle the implementation of the GPU kernel algorithm differently to utilize its potential.
   \end{itemize}
 \end{frame}
 
