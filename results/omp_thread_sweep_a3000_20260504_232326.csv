@@ -1,7 +1,0 @@
-threads,elapsed_ms,solution_count,status,log_file
-1,506518,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t1-20260504_232326.log
-2,259222,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t2-20260504_232326.log
-3,174080,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t3-20260504_232326.log
-4,128211,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t4-20260504_232326.log
-5,105090,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t5-20260504_232326.log
-6,101121,7,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a3000-t6-20260504_232326.log

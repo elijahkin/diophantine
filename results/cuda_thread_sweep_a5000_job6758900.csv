@@ -1,7 +1,0 @@
-threads_per_block,runtime_ms,solution_count,blocks,total_launched_threads,speedup_vs_best_runtime_baseline,ms_per_solution,solutions_per_second,status,device,pair_entries,max_v_div_7_6,error
-32,114900,7,1088,34816,0.8924,16414.2857,0.060923,ok,NVIDIA GeForce RTX 2080 Ti,309673,265620617259815213,
-64,122924,7,1088,69632,0.8342,17560.5714,0.056946,ok,NVIDIA GeForce RTX 2080 Ti,309673,265620617259815213,
-128,105018,7,1088,139264,0.9764,15002.5714,0.066655,ok,NVIDIA GeForce RTX 2080 Ti,309673,265620617259815213,
-256,102538,7,1088,278528,1.0,14648.2857,0.068267,ok,NVIDIA GeForce RTX 2080 Ti,309673,265620617259815213,
-512,107328,7,1088,557056,0.9554,15332.5714,0.065221,ok,NVIDIA GeForce RTX 2080 Ti,309673,265620617259815213,
-1024,,0,,,,,,launch_failed,,,,error: src/solve_cuda.cu:456: cudaGetLastError() failed: too many resources requested for launch

@@ -1,4 +1,4 @@
-\documentclass[handout]{beamer}
+\documentclass[]{beamer}
 
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -50,7 +50,29 @@
     b_2^6 \equiv a_1^6 + a_2^6 - b_1^6 \mod 7^6.
   \end{equation*}
   \pause
-  Finally, we define $v = a_1^6 + a_2^6 - (b_1^6 + b_2^6)$ and check if we can decompose $v / 7^6 = c_1^6 + c_2^6 + c_3^6$. Modular restrictions make this step tractable.
+  Finally, we define $v = a_1^6 + a_2^6 - (b_1^6 + b_2^6)$ and check if we can decompose $v / 7^6 = c_1^6 + c_2^6 + c_3^6$.
+  \pause
+  Modular restrictions make this step tractable,
+  \pause
+  i.e. it is impossible for a sum of three sixths powers to be congruent to $15 \mod 31$.
+\end{frame}
+
+\begin{frame}{OpenMP Implementation}
+  Our OpenMP program works by doing a triangular search over $1 \leq a_2 \leq a_1 \leq \texttt{a\_max}$.
+  \pause
+  Since each iteration of the $a_1$ loop is independent, it is ripe for parallelization!
+  \pause
+  Using this program with \texttt{a\_max} equal to $3000$, we find the first several solutions in about 5 seconds with 32 threads on one Zaratan node:
+  \pause
+  \begin{align*}
+    1117^6 + 770^6 &= 602^6 + 212^6 + 1092^6 + 861^6 + 84^6 \\
+    2041^6 + 691^6 &= 1893^6 + 1468^6 + 1407^6 + 1302^6 + 1246^6 \\
+    2441^6 + 752^6 &= 2096^6 + 1266^6 + 2184^6 + 1484^6 + 1239^6 \\
+    2827^6 + 151^6 &= 1488^6 + 390^6 + 2653^6 + 2296^6 + 1281^6 \\
+    2959^6 + 2470^6 &= 2481^6 + 850^6 + 2954^6 + 798^6 + 420^6
+  \end{align*}
+  \pause
+  For comparison, the 2002 paper mentions it took about 5 minutes to obtain just the single smallest solution.
 \end{frame}
 
 \begin{frame}{CUDA Implementation: Host Setup}
@@ -159,6 +181,44 @@
 
   In short, CUDA parallelizes the outer $(a_1,a_2)$ search, while modular
   arithmetic and precomputed tables keep each thread's inner search small.
+\end{frame}
+
+\begin{frame}{Performance: OpenMP}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{images/omp3000.png}
+  \end{figure}
+
+  \small For $a_{\max}=3000$, OpenMP scales from $506{,}518$ ms at 1 thread
+  to $101{,}121$ ms at 6 threads, about a $5\times$ speedup.
+\end{frame}
+
+\begin{frame}{Performance: CUDA at $a_{\max}=3000$}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{images/cuda3000.png}
+  \end{figure}
+
+  \small Best runtime was $8{,}738$ ms at 256 threads per block. Changing
+  threads per block gave only modest variation.
+\end{frame}
+
+\begin{frame}{Performance: CUDA at $a_{\max}=5000$}
+  \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.74\textwidth]{images/cuda5000.png}
+  \end{figure}
+
+  \small For the larger problem, the best runtime was $102{,}538$ ms at 256
+  threads per block, but the scaling curve stayed much flatter than OpenMP.
+\end{frame}
+
+\begin{frame}{Performance Takeaways}
+  \begin{itemize}
+    \item OpenMP shows strong thread scaling for this search on the CPU.
+    \item CUDA gives lower absolute runtime, but the current kernel does not scale strongly with threads per block.
+    \item The bottleneck is implementation quality of the GPU kernel, not the absence of parallel work in the problem itself.
+  \end{itemize}
 \end{frame}
 
 \begin{frame}{Generalizability}

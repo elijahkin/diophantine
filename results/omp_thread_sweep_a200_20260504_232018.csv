@@ -1,3 +1,0 @@
-threads,elapsed_ms,solution_count,status,log_file
-1,46,0,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a200-t1-20260504_232018.log
-2,25,0,ok,/nfshomes/hiseric/hpc/diophantine/logs/omp-a200-t2-20260504_232018.log
