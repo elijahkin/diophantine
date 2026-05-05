@@ -3,11 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: ./submit_cuda_slurm.sh <a_max> [max_solutions]
+Usage: ./submit_cuda_slurm.sh <a_max> [max_solutions] [threads_per_block_list]
 
 Environment overrides:
   CUDA_MODULE=11.8.0
   CUDA_ARCH=sm_70
+  CUDA_THREADS_PER_BLOCK_LIST=64:128:256
   SLURM_ACCOUNT=<account>
   SLURM_PARTITION=<partition>
   SLURM_QOS=<qos>
@@ -19,13 +20,14 @@ Environment overrides:
 USAGE
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -lt 1 || $# -gt 3 ]]; then
   usage
   exit 2
 fi
 
 A_MAX="$1"
 MAX_SOLUTIONS="${2:-65536}"
+THREADS_PER_BLOCK_LIST="${3:-${CUDA_THREADS_PER_BLOCK_LIST:-128}}"
 CUDA_MODULE="${CUDA_MODULE:-11.8.0}"
 CUDA_ARCH="${CUDA_ARCH:-sm_70}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,7 +58,7 @@ else
   SBATCH_ARGS+=(--gres="gpu:${SLURM_GPUS:-1}")
 fi
 
-EXPORTS="ALL,A_MAX=${A_MAX},MAX_SOLUTIONS=${MAX_SOLUTIONS},PROJECT_DIR=${PROJECT_DIR},CUDA_MODULE=${CUDA_MODULE},CUDA_ARCH=${CUDA_ARCH}"
+EXPORTS="ALL,A_MAX=${A_MAX},MAX_SOLUTIONS=${MAX_SOLUTIONS},THREADS_PER_BLOCK_LIST=${THREADS_PER_BLOCK_LIST},PROJECT_DIR=${PROJECT_DIR},CUDA_MODULE=${CUDA_MODULE},CUDA_ARCH=${CUDA_ARCH}"
 SBATCH_ARGS+=(--export="${EXPORTS}")
 
 sbatch "${SBATCH_ARGS[@]}" <<'SBATCH'
@@ -75,5 +77,10 @@ module purge
 module load "cuda/${CUDA_MODULE}"
 
 make cuda CUDA_ARCH="${CUDA_ARCH}" NVCC="$(command -v nvcc)"
-./bin/solve_cuda "${A_MAX}" "${MAX_SOLUTIONS}"
+
+IFS=':,' read -r -a THREAD_COUNTS <<< "${THREADS_PER_BLOCK_LIST}"
+for threads_per_block in "${THREAD_COUNTS[@]}"; do
+  printf '=== threads_per_block=%s ===\n' "${threads_per_block}"
+  ./bin/solve_cuda "${A_MAX}" "${MAX_SOLUTIONS}" "${threads_per_block}"
+done
 SBATCH

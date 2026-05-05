@@ -19,7 +19,8 @@ constexpr uint64_t kMod = 117649;  // 7^6
 constexpr uint64_t kResidueKeys = kMod / 7;
 constexpr uint32_t kResiduesPerKey = 6;
 constexpr uint32_t kDefaultMaxSolutions = 65536;
-constexpr int kThreadsPerBlock = 128;
+constexpr int kDefaultThreadsPerBlock = 128;
+constexpr int kMaxThreadsPerBlock = 1024;
 constexpr uint64_t kMaxUint64 = 0xffffffffffffffffULL;
 
 struct PairEntry {
@@ -368,15 +369,18 @@ void print_solution(const Solution& s) {
 
 int main(int argc, char* argv[]) {
   try {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
       std::cerr << "Usage: " << argv[0]
-                << " <a_max> [max_solutions]\n";
+                << " <a_max> [max_solutions] [threads_per_block]\n";
       return 2;
     }
 
     const uint64_t a_max = parse_u64(argv[1], "a_max");
     const uint64_t max_solutions_arg =
-        argc == 3 ? parse_u64(argv[2], "max_solutions") : kDefaultMaxSolutions;
+        argc >= 3 ? parse_u64(argv[2], "max_solutions") : kDefaultMaxSolutions;
+    const uint64_t threads_per_block_arg =
+        argc == 4 ? parse_u64(argv[3], "threads_per_block")
+                  : kDefaultThreadsPerBlock;
     if (a_max == 0) {
       throw std::runtime_error("a_max must be positive");
     }
@@ -391,6 +395,11 @@ int main(int argc, char* argv[]) {
     }
     const unsigned int max_solutions =
         static_cast<unsigned int>(max_solutions_arg);
+    if (threads_per_block_arg == 0 ||
+        threads_per_block_arg > static_cast<uint64_t>(kMaxThreadsPerBlock)) {
+      throw std::runtime_error("threads_per_block must be in [1, 1024]");
+    }
+    const int threads_per_block = static_cast<int>(threads_per_block_arg);
 
     int device = 0;
     CUDA_CHECK(cudaGetDevice(&device));
@@ -436,12 +445,12 @@ int main(int argc, char* argv[]) {
 
     const uint64_t total_pairs = (a_max * (a_max + 1)) / 2;
     const uint64_t needed_blocks =
-        (total_pairs + kThreadsPerBlock - 1) / kThreadsPerBlock;
+        (total_pairs + threads_per_block - 1) / threads_per_block;
     const int occupancy_blocks = std::max(1, props.multiProcessorCount * 16);
     const int blocks =
         static_cast<int>(std::min<uint64_t>(needed_blocks, occupancy_blocks));
 
-    solve_kernel<<<blocks, kThreadsPerBlock>>>(
+    solve_kernel<<<blocks, threads_per_block>>>(
         a_max, d_residues, d_residue_counts, d_pairs, h_pairs.size(),
         d_solutions, d_solution_count, max_solutions);
     CUDA_CHECK(cudaGetLastError());
@@ -486,6 +495,10 @@ int main(int argc, char* argv[]) {
         std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
     std::cout << "Finished CUDA search in " << duration.count() << " ms!\n";
     std::cerr << "CUDA device: " << props.name
+              << ", blocks: " << blocks
+              << ", threads/block: " << threads_per_block
+              << ", total launched threads: "
+              << (static_cast<uint64_t>(blocks) * threads_per_block)
               << ", pair entries: " << h_pairs.size()
               << ", max v/7^6: " << to_string(max_v_div) << "\n";
     return 0;
